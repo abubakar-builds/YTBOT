@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from yt_dlp import YoutubeDL
@@ -7,9 +8,26 @@ import uuid
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
-# Vercel allows writing ONLY to the /tmp directory
-DOWNLOAD_DIR = Path("/tmp/downloads")
+# Render uses a persistent disk, so we can save to a normal folder
+DOWNLOAD_DIR = Path("./downloads")
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- Auto-Cleanup System (Deletes files older than 1 hour) ---
+# This prevents the server from running out of disk space
+def cleanup_old_files():
+    while True:
+        time.sleep(3600) # Wait 1 hour
+        now = time.time()
+        for f in DOWNLOAD_DIR.glob("*"):
+            if os.path.isfile(f) and os.stat(f).st_mtime < now - 3600:
+                try:
+                    os.remove(f)
+                    print(f"Auto-cleaned old file: {f.name}")
+                except Exception as e:
+                    print(f"Failed to delete {f.name}: {e}")
+
+# Start cleanup in the background
+threading.Thread(target=cleanup_old_files, daemon=True).start()
 
 @app.route('/')
 def index():
@@ -66,7 +84,7 @@ def download_video():
     if not url or not format_id:
         return jsonify({"error": "Missing parameters"}), 400
 
-    # Generate unique filename
+    # Generate unique filename so multiple users don't overwrite each other
     unique_id = str(uuid.uuid4())
     outtmpl = str(DOWNLOAD_DIR / f"{unique_id}.%(ext)s")
 
@@ -75,8 +93,9 @@ def download_video():
         'outtmpl': outtmpl,
         'noplaylist': True,
         'concurrent_fragment_downloads': 10,
-        'ffmpeg_location': 'ffmpeg', # Vercel automatically provides FFmpeg in the PATH
+        'ffmpeg_location': 'ffmpeg', # Uses Render's built-in FFmpeg
         'merge_output_format': 'mp4',
+        'restrictfilenames': True,   # Keeps filenames safe for Linux
     }
 
     if format_id.startswith("bestaudio"):
@@ -91,17 +110,23 @@ def download_video():
             info = ydl.extract_info(url, download=True)
             # Find the downloaded file
             filename = ydl.prepare_filename(info)
+            
+            # Adjust extension if FFmpeg changed it
             if format_id.startswith("bestaudio"):
                 filename = filename.rsplit('.', 1)[0] + '.mp3'
             elif not filename.endswith('.mp4'):
                 filename = filename.rsplit('.', 1)[0] + '.mp4'
 
-        # Stream the file to the user's browser
-        return send_file(
-            filename,
-            as_attachment=True,
-            download_name=f"{info.get('title', 'video')}.{filename.split('.')[-1]}"
-        )
+            # Stream the file to the user's browser
+            return send_file(
+                filename,
+                as_attachment=True,
+                download_name=f"{info.get('title', 'video')}.{filename.split('.')[-1]}"
+            )
     except Exception as e:
         print(f"Error: {e}")
         return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    # For local testing
+    app.run(host='0.0.0.0', port=5000, debug=True)
