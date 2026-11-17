@@ -1,0 +1,92 @@
+<!-- ONLY REPLACE THE JAVASCRIPT SECTION -->
+<script>
+    let currentUrl = '';
+
+    function toggleFaq(el) {
+        const item = el.parentElement;
+        const isActive = item.classList.contains('active');
+        document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('active'));
+        if (!isActive) item.classList.add('active');
+    }
+
+    async function analyzeVideo() {
+        const urlInput = document.getElementById('url-input').value.trim();
+        if (!urlInput) return alert("Please paste a valid YouTube URL");
+
+        currentUrl = urlInput;
+        const btn = document.getElementById('analyze-btn');
+        btn.disabled = true;
+        btn.innerHTML = 'Analyzing...';
+        
+        const appUi = document.getElementById('app-ui');
+        appUi.style.display = 'block';
+        
+        document.getElementById('thumb').style.display = 'none';
+        document.getElementById('v-title').innerText = 'Fetching video info...';
+        document.getElementById('v-author').innerText = '';
+        document.getElementById('select-wrapper').style.display = 'none';
+        document.getElementById('download-btn').style.display = 'none';
+
+        try {
+            const response = await fetch('/api/info', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: currentUrl })
+            });
+            const data = await response.json();
+
+            if (!response.ok) throw new Error(data.error);
+
+            const img = document.getElementById('thumb');
+            img.src = data.thumbnail;
+            img.style.display = 'block';
+            
+            document.getElementById('v-title').innerText = data.title;
+            document.getElementById('v-author').innerText = `By: ${data.uploader}`;
+            
+            const select = document.getElementById('format-select');
+            select.innerHTML = '';
+            data.formats.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f.id;
+                opt.textContent = f.label;
+                select.appendChild(opt);
+            });
+
+            document.getElementById('select-wrapper').style.display = 'block';
+            document.getElementById('download-btn').style.display = 'flex';
+
+        } catch (error) {
+            document.getElementById('v-title').innerText = 'Error loading video';
+            document.getElementById('v-author').innerText = error.message;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = 'Download <span>→</span>';
+        }
+    }
+
+    function startDownload() {
+        const formatId = document.getElementById('format-select').value;
+        const downloadBtn = document.getElementById('download-btn');
+        
+        // Change button state
+        downloadBtn.innerHTML = "Preparing file... Please wait.";
+        downloadBtn.disabled = true;
+
+        // Trigger direct browser download
+        const downloadUrl = `/api/download?url=${encodeURIComponent(currentUrl)}&format_id=${encodeURIComponent(formatId)}`;
+        
+        // Create an invisible link and click it
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        
+        // Reset button after 5 seconds
+        setTimeout(() => {
+            downloadBtn.innerHTML = "Start Download";
+            downloadBtn.disabled = false;
+        }, 5000);
+    }
+</script>
